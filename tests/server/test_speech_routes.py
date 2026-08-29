@@ -1,0 +1,149 @@
+"""Tests for speech API endpoints."""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+fastapi = pytest.importorskip("fastapi")
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from openjarvis.speech._stubs import TranscriptionResult  # noqa: E402
+
+
+@pytest.fixture
+def mock_speech_backend():
+    backend = MagicMock()
+    backend.backend_id = "mock"
+    backend.health.return_value = True
+    backend.transcribe.return_value = TranscriptionResult(
+        text="Hello world",
+        language="en",
+        confidence=0.95,
+        duration_seconds=1.5,
+        segments=[],
+    )
+    return backend
+
+
+@pytest.fixture
+def app_with_speech(mock_speech_backend):
+    from fastapi import FastAPI
+
+    from openjarvis.server.api_routes import speech_router
+
+    app = FastAPI()
+    app.state.speech_backend = mock_speech_backend
+    app.include_router(speech_router)
+    return app
+
+
+@pytest.fixture
+def client(app_with_speech):
+    return TestClient(app_with_speech)
+
+
+def test_transcribe_endpoint(client, mock_speech_backend):
+    response = client.post(
+        "/v1/speech/transcribe",
+        files={"file": ("test.wav", b"fake audio data", "audio/wav")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["text"] == "Hello world"
+    assert data["language"] == "en"
+    assert data["confidence"] == 0.95
+    assert data["duration_seconds"] == 1.5
+
+
+def test_transcribe_endpoint_offloads_backend_work(client, mock_speech_backend):
+    expected = TranscriptionResult(
+        text="Offloaded",
+        language="en",
+        confidence=0.9,
+        duration_seconds=1.0,
+        segments=[],
+    )
+
+    with patch(
+        "openjarvis.server.api_routes.asyncio.to_thread",
+        new_callable=AsyncMock,
+    ) as mock_to_thread:
+        mock_to_thread.return_value = expected
+        response = client.post(
+            "/v1/speech/transcribe",
+            files={"file": ("test.wav", b"fake audio data", "audio/wav")},
+        )
+
+    assert response.status_code == 200
+    mock_to_thread.assert_awaited_once()
+    args, kwargs = mock_to_thread.await_args
+    assert args == (mock_speech_backend.transcribe, b"fake audio data")
+    assert kwargs == {"format": "wav", "language": None}
+    assert response.json()["text"] == "Offloaded"
+
+
+def test_transcribe_endpoint_hides_backend_error(client, mock_speech_backend):
+    mock_speech_backend.transcribe.side_effect = RuntimeError("missing cublas64_12.dll")
+
+    response = client.post(
+        "/v1/speech/transcribe",
+        files={"file": ("test.wav", b"fake audio data", "audio/wav")},
+    )
+
+    assert response.status_code == 502
+    assert "missing cublas64_12.dll" not in response.text
+    assert "unavailable" in response.json()["detail"].lower()
+
+
+def test_transcribe_no_file(client):
+    response = client.post("/v1/speech/transcribe")
+    assert response.status_code == 400 or response.status_code == 422
+
+
+def test_transcribe_rejects_empty_or_oversized_audio(client, mock_speech_backend):
+    empty = client.post("/v1/speech/transcribe", files={"file": ("empty.wav", b"", "audio/wav")})
+    oversized = client.post("/v1/speech/transcribe", files={"file": ("large.wav", b"x" * (8 * 1024 * 1024 + 1), "audio/wav")})
+    assert empty.status_code == 400
+    assert oversized.status_code == 413
+    mock_speech_backend.transcribe.assert_not_called()
+
+
+def test_health_endpoint(client):
+    response = client.get("/v1/speech/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["available"] is True
+    assert data["backend"] == "mock"
+
+
+def test_health_endpoint_hides_backend_reason(client, mock_speech_backend):
+    mock_speech_backend.health.return_value = False
+    mock_speech_backend.last_error.return_value = (
+        "Install with: uv sync --extra desktop"
+    )
+
+    response = client.get("/v1/speech/health")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["available"] is False
+    assert data["reason"] == "Speech backend is unavailable. Check server logs."
+    assert "uv sync" not in response.text
+
+
+def test_health_no_backend():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from openjarvis.server.api_routes import speech_router
+
+    app = FastAPI()
+    app.state.speech_backend = None
+    app.include_router(speech_router)
+    client = TestClient(app)
+
+    response = client.get("/v1/speech/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["available"] is False
