@@ -1,0 +1,24 @@
+# Creative Suite dependencies
+# HARD requirements (engine core):
+Pillow>=10.0
+
+# Optional — enable extra operations (lazy imports, suite degrades safely):
+numpy>=1.26
+opencv-python-headless>=4.9
+arabic-reshaper>=3.0
+python-bidi>=0.4
+ddgs>=9.0
+
+# NOTE:
+# - ffmpeg must exist on the system PATH (or set JARVIS_FFMPEG).
+# - httpx is already a core dependency of OpenJarvis.
+# - MoviePy is NOT required — the engine talks to ffmpeg directly.
+# - GEOINT (v1.2) needs NOTHING extra: Overpass/Copernicus/NASA GIBS are
+#   free & key-less, and EXIF falls back to Pillow automatically.
+#   Optional: install the real ExifTool binary for deeper metadata
+#   (brew install exiftool / apt install libimage-exiftool-perl /
+#    winget install OliverBetz.ExifTool) or set JARVIS_EXIFTOOL.
+# - Shodan (v1.3) needs NOTHING extra and NO API key: InternetDB +
+#   key-less host lookups work out of the box (httpx is core).
+#   Optional: save a free shodan_api_key to unlock search + profile
+#   (POST /api/creative/keys/shodan_api_key or SHODAN_API_KEY env).
