@@ -1,0 +1,9 @@
+# Mobile Companion Suite — runtime requirements
+#
+# ZERO new Python dependencies. Push delivery uses the standard library
+# (urllib.request / json / threading). FastAPI, Pydantic and the OpenJarvis
+# core are already part of the server.
+#
+# Optional environment variables:
+#   OPENJARVIS_PUSH_ENDPOINT     — override the Expo push URL (self-hosted relay)
+#   OPENJARVIS_PUSH_ACCESS_TOKEN — optional bearer token for private Expo projects
